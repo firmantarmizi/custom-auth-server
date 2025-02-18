@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Login - <%= host %></title>
+    <title>Login - <%= service %></title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -49,19 +49,23 @@
             color: red;
             margin-bottom: 1rem;
         }
-        .host-info {
+        .service-info {
             text-align: center;
             color: #666;
             margin-bottom: 1rem;
             font-size: 0.9em;
+        }
+        .service-name {
+            font-weight: bold;
+            color: #007bff;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <h2>Login</h2>
-        <div class="host-info">
-            Accessing: <%= host %>
+        <div class="service-info">
+            Accessing service: <span class="service-name"><%= service %></span>
         </div>
         <% if (locals.error) { %>
             <div class="error"><%= error %></div>
