@@ -24,12 +24,14 @@ const VALIDITY = parseInt(process.env.VALIDITY || '1800'); // 30 minutes
 // Function to verify credentials against Easypanel Basic Auth
 async function verifyCredentials(username, password, verifyUrl) {
     try {
+        console.log(`Verifying credentials for user ${username} against ${verifyUrl}`);
         const auth = Buffer.from(`${username}:${password}`).toString('base64');
         const response = await fetch(verifyUrl, {
             headers: {
                 'Authorization': `Basic ${auth}`
             }
         });
+        console.log(`Verification response status: ${response.status}`);
         return response.status === 200;
     } catch (error) {
         console.error('Error verifying credentials:', error);
@@ -45,6 +47,14 @@ app.all('/', async (req, res) => {
         uri: req.header('X-Forwarded-Uri') || req.originalUrl,
         ip: req.header('X-Forwarded-For') || req.ip,
     };
+
+    // Log headers for debugging
+    console.log('Forwarded headers:', {
+        method: forwarded.method,
+        protocol: forwarded.protocol,
+        host: forwarded.host,
+        uri: forwarded.uri
+    });
 
     const originalUrl = `${forwarded.protocol}://${forwarded.host}${forwarded.uri}`;
     
@@ -66,6 +76,8 @@ app.all('/', async (req, res) => {
             
             // Verify against the original requesting host
             const verifyUrl = `${forwarded.protocol}://${forwarded.host}`;
+            console.log(`Attempting to verify against: ${verifyUrl}`);
+            
             const isValid = await verifyCredentials(username, password, verifyUrl);
             
             if (!isValid) {
@@ -77,7 +89,7 @@ app.all('/', async (req, res) => {
             const token = jwt.sign({ 
                 user: username,
                 pass: password,
-                host: forwarded.host, // Store the host for verification
+                host: forwarded.host,
                 exp: Math.floor(expire / 1000) 
             }, JWT_SECRET);
 
@@ -85,20 +97,23 @@ app.all('/', async (req, res) => {
                 secure: forwarded.protocol === 'https',
                 httpOnly: true,
                 expires: new Date(expire),
-                domain: process.env.COOKIE_DOMAIN || undefined // Optional: set cookie for all subdomains
+                domain: process.env.COOKIE_DOMAIN || undefined
             });
 
             return res.redirect(originalUrl);
         }
 
-        // Show login form
+        // Show login form with the original requesting host
+        const targetHost = forwarded.host;
+        console.log(`Rendering login form for host: ${targetHost}`);
+        
         res.status(401).render('login', { 
             url: originalUrl,
-            host: forwarded.host
+            host: targetHost
         });
 
     } catch (error) {
-        console.error(error);
+        console.error('Error in request handling:', error);
         res.clearCookie(COOKIE_NAME);
         res.status(401).render('login', { 
             url: originalUrl, 
