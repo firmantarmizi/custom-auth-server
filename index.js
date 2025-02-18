@@ -3,7 +3,6 @@ const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
 const fetch = require('node-fetch');
 const path = require('path');
-const url = require('url');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -22,12 +21,36 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const COOKIE_NAME = process.env.COOKIE_NAME || 'auth-token';
 const VALIDITY = parseInt(process.env.VALIDITY || '1800'); // 30 minutes
 
+// Parse SERVICE_MAPPING from environment variable
+// Format: hostname=service,hostname2=service2
+// Example: registry-ui.jpmyhv.easypanel.host=registry-ui,grafana.jpmyhv.easypanel.host=grafana
+const SERVICE_MAPPING = {};
+if (process.env.SERVICE_MAPPING) {
+    process.env.SERVICE_MAPPING.split(',').forEach(mapping => {
+        const [hostname, service] = mapping.trim().split('=');
+        if (hostname && service) {
+            SERVICE_MAPPING[hostname.toLowerCase()] = service;
+        }
+    });
+}
+
+console.log('Loaded service mapping:', SERVICE_MAPPING);
+
 // Function to get service name from host
-function getServiceName(host) {
-    // Extract service name from subdomain
-    const serviceName = host.split('.')[0];
-    console.log(`Extracted service name: ${serviceName} from host: ${host}`);
-    return serviceName;
+function getServiceFromHost(host) {
+    // Remove port if present
+    const hostname = host.split(':')[0].toLowerCase();
+    
+    // Check if we have a direct mapping
+    if (SERVICE_MAPPING[hostname]) {
+        console.log(`Found mapped service: ${SERVICE_MAPPING[hostname]} for host: ${hostname}`);
+        return SERVICE_MAPPING[hostname];
+    }
+    
+    // Extract subdomain as fallback
+    const subdomain = hostname.split('.')[0];
+    console.log(`Using subdomain as service name: ${subdomain} from host: ${hostname}`);
+    return subdomain;
 }
 
 // Function to verify credentials against Easypanel Basic Auth
@@ -67,13 +90,17 @@ app.all('/', async (req, res) => {
     });
 
     const originalUrl = `${forwarded.protocol}://${forwarded.host}${forwarded.uri}`;
-    const serviceName = getServiceName(forwarded.host);
+    const targetService = getServiceFromHost(forwarded.host);
+    
+    if (!targetService) {
+        return res.status(400).send('Could not determine target service');
+    }
     
     try {
         // Check if already authenticated
         if (req.cookies[COOKIE_NAME]) {
             const decoded = jwt.verify(req.cookies[COOKIE_NAME], JWT_SECRET);
-            if (decoded && decoded.service === serviceName) {
+            if (decoded && decoded.service === targetService) {
                 // Add Basic Auth header to the response for downstream services
                 const auth = Buffer.from(`${decoded.user}:${decoded.pass}`).toString('base64');
                 res.setHeader('Authorization', `Basic ${auth}`);
@@ -85,7 +112,7 @@ app.all('/', async (req, res) => {
         if (forwarded.method.toUpperCase() === 'POST') {
             const { username, password } = req.body;
             
-            const isValid = await verifyCredentials(username, password, serviceName);
+            const isValid = await verifyCredentials(username, password, targetService);
             
             if (!isValid) {
                 throw new Error('Invalid credentials');
@@ -96,7 +123,7 @@ app.all('/', async (req, res) => {
             const token = jwt.sign({ 
                 user: username,
                 pass: password,
-                service: serviceName,
+                service: targetService,
                 exp: Math.floor(expire / 1000) 
             }, JWT_SECRET);
 
@@ -110,21 +137,19 @@ app.all('/', async (req, res) => {
         }
 
         // Show login form
-        console.log(`Rendering login form for service: ${serviceName}`);
+        console.log(`Rendering login form for service: ${targetService}`);
         
         res.status(401).render('login', { 
             url: originalUrl,
-            host: forwarded.host,
-            service: serviceName
+            service: targetService
         });
 
     } catch (error) {
         console.error('Error in request handling:', error);
         res.clearCookie(COOKIE_NAME);
         res.status(401).render('login', { 
-            url: originalUrl, 
-            host: forwarded.host,
-            service: serviceName,
+            url: originalUrl,
+            service: targetService,
             error: error.message 
         });
     }
@@ -137,4 +162,9 @@ app.get('/health', (req, res) => {
 
 app.listen(port, () => {
     console.log(`Auth server running on port ${port}`);
+    console.log('Environment variables:');
+    console.log('- JWT_SECRET:', JWT_SECRET ? '(set)' : '(using default)');
+    console.log('- COOKIE_NAME:', COOKIE_NAME);
+    console.log('- VALIDITY:', VALIDITY, 'seconds');
+    console.log('- SERVICE_MAPPING:', process.env.SERVICE_MAPPING || '(not set, using subdomains)');
 });
